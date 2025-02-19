@@ -168,6 +168,6 @@ cython_debug/
 
 # Others/common
 .DS_Store
-outputs/
+general_use/outputs/
 .docx
 
