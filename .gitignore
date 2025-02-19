@@ -168,7 +168,7 @@ cython_debug/
 
 # Others/common
 .DS_Store
-./outputs/pits
+./outputs
 .csv
 .docx
 
