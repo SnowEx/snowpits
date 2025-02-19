@@ -171,3 +171,5 @@ cython_debug/
 ./outputs/pits
 .csv
 .docx
+~$*
+
