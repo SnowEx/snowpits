@@ -168,3 +168,5 @@ cython_debug/
 
 # Others/common
 .DS_Store
+./outputs/pits
+.csv
