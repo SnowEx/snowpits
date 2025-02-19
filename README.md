@@ -1,8 +1,8 @@
 # snowpits repo
-This repository is home to the NASA SnowEx Snow Pit processing scripts and blank field template and digital data sheets. 
+This repository is home to the NASA SnowEx Snow Pit processing scripts, blank field templates, and electronic data entry sheets. Additionaly, there is a 'general_use' directory that is intended for snow school or other field campaign applications. In the directory you'll find printable data sheets, electronic field entry forms (excel macros sheets with drop down options in some fields to maintain consistancy in data transfering, and a general purpose script to process snow pit parameters (i.e. density, temperature, liquid water content, and stratigrapy) and summary files (i.e. SWE and environment/wx conditions).  
 
 # organization 
-There are four main directories organized by SnowEx field campaign year: SnowEx2017, SnowEx2020, SnowEx2021, and SnowEx2023, hereinafter referred to as S17, S20, S21, and S23. 
+There are four main directories organized by SnowEx field campaign year: SnowEx2017, SnowEx2020, SnowEx2021, and SnowEx2023, hereinafter referred to as S17, S20, S21, and S23, with an additional directory for general use (i.e. the script is more flexible, fluent, and not catered to nuances for each NASA SnowEx field campaign).
 
 Within each directory there is the main script that produces the parameter files (_density.csv, _temperature.csv, _lwc.csv, _stratigraphy.csv, etc) from the electronic snow pit sheets. 
 
