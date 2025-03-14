@@ -28,7 +28,7 @@ import shutil
 import numpy as np
 import pandas as pd
 import csv
-# from csv import writer
+from csv import writer
 import textwrap
 from pathlib import Path
 import utm
@@ -175,6 +175,163 @@ def get_density(filename, HeightOfSnow, fname_density):
     
     return density, AvgDensity
 
+#------------------------------------------------------------------------------- 
+# get_SWE() computes SWE and creates a gapFilled Density dataframe, that is saved
+def get_SWE(filename, density, metadata, fname_swe, fname_gapFilledDensity):
+    
+   print('I AM SWE FILE NAME:', fname_swe)
+   if density.empty: # this wont run if density isn't in the parameter list
+       print(f"{filename.name} ~~~~~~~~~~~~~~~~~ file SKIP")
+
+       avgDensityA = -9999 # if density is empty, write it as -9999 in the SWE summary file (e.g. several snow pits completed, and one is missing a density profile)
+       avgDensityB = -9999
+       avgDens     = -9999
+       sumSWEA     = -9999
+       sumSWEB     = -9999
+       avgSWE      = -9999       
+
+       newrow = [metadata["Location"], 
+                 metadata["Site"],
+                 metadata["PitID"], 
+                 metadata["Datetime_str"], 
+                 metadata["Zone"], 
+                 metadata["Easting"], 
+                 metadata["Northing"], 
+                 metadata["Latitude"], 
+                 metadata["Longitude"],
+                 avgDensityA,
+                 avgDensityB, 
+                 avgDens, 
+                 sumSWEA, 
+                 sumSWEB, 
+                 avgSWE, 
+                 metadata["HS (cm)"], 
+                 metadata["Flag"]] 
+       
+       with open(fname_swe,'a', newline='') as fd:
+           csv_writer = writer(fd, delimiter=',')
+           csv_writer.writerow(newrow)
+          
+
+   elif density['Density A (kg/m3)'].notna().any(): #if Density A has values compute SWE
+       # print(f"there are densites")
+       SWEA_calc = [0.0] * len(density) #density.shape[0] #len(density) should also work here.
+       SWEB_calc = [0.0] * len(density) #density.shape[0]
+       sumSWEA=0
+       sumSWEB=0
+       densityA = 0
+       sumDensityA = 0
+       avgDensityA = 0
+       densityB=0
+       sumDensityB=0
+       avgDensityB=0
+       avgSWE = 0
+       avgDens = 0
+
+
+       # Steps to clean up density profiles:
+
+       # 1. Does top of density match HS? If not, set it to HS
+       if density.at[0, '# Top (cm)'] != metadata["HS (cm)"]: 
+           density.at[0,'# Top (cm)'] = metadata["HS (cm)"] # e.g if there's a gap, extrapolate to the top
+
+       # 2. Is the last density height 0cm? If not, set it to zero (swe is extrapolated to bottom)
+       if density.at[len(density)-1, 'Bottom (cm)'] != 0:
+           density.at[len(density)-1, 'Bottom (cm)'] = 0 # e.g if it ends at 5cm, make it 0. (NOTE, if working with large/frequent bottom of the snow air gaps, you sould modify this or look to S23 for SnowEx23 in Alaska)
+
+       # 3. Is there overlap at the bottom of the snow pit? If so, shorten the bottom segment (more likely to be a worse measurement near the bottom, e.g 16-6, 12-2 --> 16-6, 6-0)
+       for i in range(1, len(density)):
+           if density.at[i, '# Top (cm)'] > density.at[i-1, 'Bottom (cm)']:
+               density.at[i, '# Top (cm)'] = density.at[i-1, 'Bottom (cm)']
+
+       # 4. Are there missing measurements in the dual (A, B) profile? (i.e A=235, B=NaN)
+       density['Density A (kg/m3)'].fillna(density['Density B (kg/m3)'], inplace=True) # fill empty B with A (better than interpolating)
+       density['Density B (kg/m3)'].fillna(density['Density A (kg/m3)'], inplace=True) # fill empty A with B (better than interpolating)
+
+       # 5. Are there any places that need interpolation or extrapolation? (the answer is, yes possible to have middle density gaps (MDG) due to observer sampling strategy
+       density['Density A (kg/m3)'] = density['Density A (kg/m3)'].interpolate(method='linear', limit_direction='both')
+       density['Density B (kg/m3)'] = density['Density B (kg/m3)'].interpolate(method='linear', limit_direction='both')
+
+       # 6. Drop Density 'C' column since it's already been averaged by 'B' and will not be further used to compute SWE (NOTE, probably better to average 'C' with 'A' and 'B', but to compute sweA and sweB you need denA and denB column and can't average all to a single row, bulk density.)
+       density.drop('Density C (kg/m3)', axis=1, inplace=True)
+       print(f"gapFilled Density:\n {density}")
+
+       # 7. Save the density dataframe that has been gapfilled and used to compute SWE
+       density.to_csv(fname_gapFilledDensity, sep=',', index=False, mode='a', na_rep=-9999)
+
+               # print(density)
+       for i in range(0, len(density)):
+
+           densityA=density['Density A (kg/m3)'][i] #relic code assignment here, cleaner to read densityA and densityB, so it's been left as is.
+           densityB=density['Density B (kg/m3)'][i]
+
+           # Calculate SWE for each layer
+           SWEA_calc[i] = (density['# Top (cm)'][i] - density['Bottom (cm)'][i])*densityA/100
+           SWEB_calc[i] = (density['# Top (cm)'][i] - density['Bottom (cm)'][i])*densityB/100
+           sumSWEA = round(sumSWEA + SWEA_calc[i])
+           sumSWEB = round(sumSWEB + SWEB_calc[i])
+           sumDensityA = sumDensityA + densityA*(density['# Top (cm)'][i] - density['Bottom (cm)'][i])
+           sumDensityB = sumDensityB + densityB*(density['# Top (cm)'][i] - density['Bottom (cm)'][i])
+
+
+       # calculate weighted average density
+       avgDensityA = sumDensityA/density['# Top (cm)'][0]
+       avgDensityB = sumDensityB/density['# Top (cm)'][0]
+       avgDens = round((avgDensityA + avgDensityB)/2) #bulk density weighted by sample height
+       avgSWE = round((sumSWEA + sumSWEB)/2) #bulk SWE " "
+       
+       print('AVG-DEN:', avgDens)
+       print('AVG-SWE:', avgSWE)
+
+
+       # print('AVG density', avgDens)
+
+       avgDensityA = round(avgDensityA)
+       avgDensityB = round(avgDensityB)
+
+       newrow = [metadata["Location"], 
+                 metadata["Site"],
+                 metadata["PitID"], 
+                 metadata["Datetime_str"], 
+                 metadata["Zone"], 
+                 metadata["Easting"], 
+                 metadata["Northing"], 
+                 metadata["Latitude"], 
+                 metadata["Longitude"],
+                 avgDensityA,
+                 avgDensityB, 
+                 avgDens, 
+                 sumSWEA, 
+                 sumSWEB, 
+                 avgSWE, 
+                 metadata["HS (cm)"], 
+                 metadata["Flag"]] 
+       
+       print('~~~~~~~~~~~:', newrow)
+       
+       with open(fname_swe,'a', newline='') as fd:
+           csv_writer = writer(fd, delimiter=',')
+           csv_writer.writerow(newrow)
+
+   # else:
+   #     print(f"{filename.name} ~~~~~~~~~~~~~~~~~ file SKIP")
+
+   #     avgDensityA = -9999 # if density is all NAN's, write it as -9999 in the SWE summary file
+   #     avgDensityB = -9999
+   #     avgDens     = -9999
+   #     sumSWEA     = -9999
+   #     sumSWEB     = -9999
+   #     avgSWE      = -9999
+   #     avgSWE      = -9999
+
+   #     newrow = [Location, Site, PitID, pit_datetime_str, str(UTMzone)+hsphere, UTME, UTMN, lat,lon, avgDensityA,
+   #           avgDensityB, avgDens, sumSWEA, sumSWEB, avgSWE, HeightOfSnow, Flag] # density['# Top (cm)'][0]
+
+   #     with open(fname_swe,'a', newline='') as fd:
+   #         csv_writer = writer(fd, delimiter=',')
+   #         csv_writer.writerow(newrow)
+
+   #     print('\n')
 
 #-------------------------------------------------------------------------------
 # get_LWC: grabs liquid water content and solves %-vol water in profile
@@ -233,14 +390,9 @@ def get_lwc(filename, fname_lwc, AvgDensity):
 
     # Add calculated LWC values to dataframe and set number of significant digits
     LWC.insert(5, "LWC-vol A (%)", LWCA_calc , False)
-    # LWC['LWC-vol A (%)'] = LWC['LWC-vol A (%)'].map(lambda x: '%2.1f' % x) # one way to set sig figs, but turns np.NaN to nan
     LWC.insert(6, "LWC-vol B (%)", LWCB_calc, False)
-    # LWC['LWC-vol B (%)'] = LWC['LWC-vol B (%)'].map(lambda x: '%2.1f' % x)
     LWC[['LWC-vol A (%)', 'LWC-vol B (%)']] = LWC[['LWC-vol A (%)', 'LWC-vol B (%)']].astype(float).round(2) # if values are floats, round them
-    # AvgPerm=LWC[['Permittivity A', 'Permittivity B']].mean(axis=1)# pd.Series
-    # AvgLWC=LWC[['LWC-vol A (%)', 'LWC-vol B (%)']].mean(axis=1) # pd.Series
     LWC.to_csv(fname_lwc, sep=',', index=False, mode='a', na_rep=-9999, encoding='utf-8')
-    print('LWC:\n', LWC)
     print('wrote: .../' + fname_lwc.name)
     
 #-------------------------------------------------------------------------------
@@ -292,7 +444,7 @@ if __name__ == "__main__":
     #--------------------------------------------------------------------------
     
     # static variables
-    campaign_prefix = 'campaign_prefix_' # ENTER YOUR FIELD CAMPAIGN PREFIX (e.g. SnowEx23_MAR23_AKIOP, SNOWWI_MoresCreek, etc.)
+    campaign_prefix = 'campaign_prefix' # ENTER YOUR FIELD CAMPAIGN PREFIX (e.g. SnowEx23_MAR23_AKIOP, SNOWWI_MoresCreek, etc.)
     # version = 'v01'
     parameter_list = ['density', 'gapFilledDensity', 'temperature', 'lwc', 'stratigraphy'] # REMOVE ANY NOT RELEVANT TO YOUR SNOW PITS, NOTE 'gapFiledDensity' should remain to extrapolate raw density to the ground and gap fill other areas, this is used to compute SWE
     summary_files_list = ['SWE', 'environment'] # REMOVE ITEM IF YOU DON'T WANT SUMMARY FILE TO GENERATE
@@ -316,37 +468,47 @@ if __name__ == "__main__":
       
 
     # empty dictionary to store summary filenames
-    summary_files = {}
+    summary_files_dict = {}
+    
+        
+    # Define headers for each file type
+    headers = {
+        'SWE': [
+            'Location', 'Site', 'PitID', 'Date/Local Standard Time', 'UTM Zone', 'Easting (m)',
+            'Northing (m)', 'Latitude (deg)', 'Longitude (deg)', 'Density A Mean (kg/m^3)',
+            'Density B Mean (kg/m^3)', 'Density Mean (kg/m^3)', 'SWE A (mm)', 'SWE B (mm)',
+            'SWE (mm)', 'Snow Depth (cm)', 'HS (cm)', 'Flag'
+        ],
+        'environment': [
+            'Location', 'Site', 'PitID', 'Date/Local Standard Time', 'UTM Zone', 'Easting (m)',
+            'Northing (m)', 'Latitude (deg)', 'Longitude (deg)', 'Precipitation', 'Sky',
+            'Wind', 'Ground Condition', 'Ground Roughness', 'Ground Vegetation',
+            'Height of Ground Vegetation (cm)', 'Canopy'
+        ]
+    }
     
     # write summary header files:  
-    for file in summary_files_list: 
-        
-        # Define headers for each file type
-        headers = {
-            'SWE': [
-                'Location', 'Site', 'PitID', 'Date/Local Standard Time', 'UTM Zone', 'Easting (m)',
-                'Northing (m)', 'Latitude (deg)', 'Longitude (deg)', 'Density A Mean (kg/m^3)',
-                'Density B Mean (kg/m^3)', 'Density Mean (kg/m^3)', 'SWE A (mm)', 'SWE B (mm)',
-                'SWE (mm)', 'Snow Depth (cm)', 'HS (cm)', 'Flag'
-            ],
-            'environment': [
-                'Location', 'Site', 'PitID', 'Date/Local Standard Time', 'UTM Zone', 'Easting (m)',
-                'Northing (m)', 'Latitude (deg)', 'Longitude (deg)', 'Precipitation', 'Sky',
-                'Wind', 'Ground Condition', 'Ground Roughness', 'Ground Vegetation',
-                'Height of Ground Vegetation (cm)', 'Canopy'
-            ]
-        }
-        
-        # Iterate through summary file types and create CSVs
-        for file in summary_files_list:
-            file_path = des_path.parent.joinpath(f"{campaign_prefix}Summary_{file}.csv")
-            
-            # Create an empty DataFrame with the specified headers
-            df = pd.DataFrame(columns=headers[file])
-            
-            # Write to CSV
-            df.to_csv(file_path, index=False, sep=',', header=True, encoding='utf-8-sig')
+    for item in summary_files_list: 
     
+        # # Iterate through summary file types and create CSVs
+        # for summary_item in summary_files_list:
+
+         # Name the summary file
+         summary_fpath = des_path.parent.joinpath(f"{campaign_prefix}_Summary_{item}.csv")
+         
+         # Store filename in the dictionary
+         summary_files_dict[item] = summary_fpath
+              
+        # Create an empty DataFrame with the specified headers
+         df = pd.DataFrame(columns=headers[item])
+         
+         # Write to CSV
+         df.to_csv(summary_fpath, index=False, sep=',', header=True, encoding='utf-8-sig')
+ 
+    swe_fpath = summary_files_dict.get('SWE')
+    env_fpath = summary_files_dict.get('environment')
+            
+
 
     for filename in sorted(src_path.rglob('./data/*.xlsx')):
         
@@ -359,7 +521,7 @@ if __name__ == "__main__":
         # extract pit sheet metadata and store in dictionary
         metadata = get_metadata(filename)
         
-        
+       
         
         # empty dictionary to store parameter filenames
         parameter_files = {}
@@ -368,7 +530,7 @@ if __name__ == "__main__":
         for parameter in parameter_list:
             
             # initiate parameter file names:
-            file_path = des_path.joinpath(campaign_prefix + metadata['PitID'] + '_' + parameter + '.csv')
+            file_path = des_path.joinpath(campaign_prefix + '_' + metadata['PitID'] + '_' + parameter + '.csv')
                 
             # write parameter header file
             write_parameter_header(metadata, file_path)
@@ -379,14 +541,12 @@ if __name__ == "__main__":
         
 
                 
-        # Density
+        # Density & SWE
         if 'density' in parameter_list:
-            density, AvgDensity = get_density(filename, metadata['HS (cm)'], parameter_files['density'])
-            # add gapFilled_Density here
-            
-        # SWE
+            density, AvgDensity = get_density(filename, metadata['HS (cm)'], parameter_files['density'])  
+            print('I SHOULD BE SWE FILE:', str(swe_fpath))
+            get_SWE(filename, density, metadata, swe_fpath, parameter_files['gapFilledDensity'])
         
-    
         
         # Liquid Water Content
         if 'lwc' in parameter_list:
