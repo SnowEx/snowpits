@@ -22,8 +22,7 @@ __status__ = "Dvp"
 __date__ = "08.2022"
 
 import datetime
-import glob
-import os
+import sys
 import shutil
 import numpy as np
 import pandas as pd
@@ -33,6 +32,11 @@ import textwrap
 from pathlib import Path
 import utm
 
+sys.path.append(str(Path('/Users/meganmason/Documents/projects/cold-content/data/data-cssl/opie/config')))
+from opie_experiments_dict import opie_dict
+
+print(opie_dict)
+
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
@@ -41,6 +45,7 @@ import utm
 def get_metadata(xl_file):
 
     d = pd.read_excel(xl_file)
+    u_id = ('_').join(xl_file.stem.split('_')[-3:])
 
     # metadata
     location = d['Unnamed: 1'][1]
@@ -83,6 +88,7 @@ def get_metadata(xl_file):
         Flag = None
 
         metadata = {
+        'UniqueID': u_id,
         'Location': location,
         'Site': site,
         'PitID': pitID, 
@@ -144,7 +150,22 @@ def write_parameter_header(metadata, file_path):
         writer.writerow(["# Flag", metadata["Flag"]])
         writer.writerow(["# Pit Comments", metadata["Pit Comments"]])
         writer.writerow(["# Parameter Codes", p_codes])
-  
+        
+#-------------------------------------------------------------------------------
+# generate_experiement_summary() added experiment metadata to exp. summary
+def generate_experiement_summary(opie_dict, metadata):
+    unique_id = metadata["UniqueID"]
+    name = metadata["Site"]
+                   
+    experiment_dict[unique_id] = experiment_dict.get(unique_id, {}) 
+    experiment_dict[unique_id].update({
+        "Exp. No":	opie_dict[name][0],
+        "Exp. Name": name,	
+        "StartDate": opie_dict[name][1],
+        "EndDate": opie_dict[name][2],
+        "PitDate": metadata["Date"],
+        "HS": metadata["HS (cm)"]
+        }) 
         
 #-------------------------------------------------------------------------------    
 # get_density() get density data from pit sheet
@@ -156,7 +177,7 @@ def get_density(filename, HeightOfSnow, fname_density):
     den_cols = ['# Top (cm)', 'Bottom (cm)', 'Density A (kg/m3)','Density B (kg/m3)','Density C (kg/m3)'] #gets rid of the '-' column
     density = d[den_cols].astype(float)
     # print('RAW density:\n', density)
-    density.to_csv(fname_density, sep=',', index=False, mode='a', na_rep=-9999) #write density csv (with NaN's)
+    density.to_csv(fname_density, sep=',', index=False, mode='a', na_rep=np.nan) #write density csv (with NaN's)
     # average 3rd sample (if taken) with profile B (this overwrites B in the dataframe)
     density['Density B (kg/m3)'] = density[['Density B (kg/m3)', 'Density C (kg/m3)']].mean(axis=1) # mean of profile B with any "extra" density samples (i.e. C)
     # density.drop(columns=['Density C (kg/m3)'], inplace=True) # drop 'C', no way to accidently use it now.
@@ -183,12 +204,19 @@ def get_SWE(filename, density, metadata, fname_swe, fname_gapFilledDensity):
    if density.empty: # this wont run if density isn't in the parameter list
        print(f"{filename.name} ~~~~~~~~~~~~~~~~~ file SKIP")
 
-       avgDensityA = -9999 # if density is empty, write it as -9999 in the SWE summary file (e.g. several snow pits completed, and one is missing a density profile)
-       avgDensityB = -9999
-       avgDens     = -9999
-       sumSWEA     = -9999
-       sumSWEB     = -9999
-       avgSWE      = -9999       
+       # avgDensityA = -9999 # if density is empty, write it as -9999 in the SWE summary file (e.g. several snow pits completed, and one is missing a density profile)
+       # avgDensityB = -9999
+       # avgDens     = -9999
+       # sumSWEA     = -9999
+       # sumSWEB     = -9999
+       # avgSWE      = -9999   
+       
+       avgDensityA = '' # if density is empty, write it as -9999 in the SWE summary file (e.g. several snow pits completed, and one is missing a density profile)
+       avgDensityB = ''
+       avgDens     = ''
+       sumSWEA     = ''
+       sumSWEB     = ''
+       avgSWE      = '' 
 
        newrow = [metadata["Location"], 
                  metadata["Site"],
@@ -257,7 +285,7 @@ def get_SWE(filename, density, metadata, fname_swe, fname_gapFilledDensity):
        print(f"gapFilled Density:\n {density}")
 
        # 7. Save the density dataframe that has been gapfilled and used to compute SWE
-       density.to_csv(fname_gapFilledDensity, sep=',', index=False, mode='a', na_rep=-9999)
+       density.to_csv(fname_gapFilledDensity, sep=',', index=False, mode='a', na_rep=np.nan)
 
                # print(density)
        for i in range(0, len(density)):
@@ -282,6 +310,7 @@ def get_SWE(filename, density, metadata, fname_swe, fname_gapFilledDensity):
        
        print('AVG-DEN:', avgDens)
        print('AVG-SWE:', avgSWE)
+       print('HS:', metadata["HS (cm)"])
 
 
        # print('AVG density', avgDens)
@@ -312,6 +341,18 @@ def get_SWE(filename, density, metadata, fname_swe, fname_gapFilledDensity):
        with open(fname_swe,'a', newline='') as fd:
            csv_writer = writer(fd, delimiter=',')
            csv_writer.writerow(newrow)
+           
+       # update Experiment dictionary    
+           
+       unique_id = metadata["UniqueID"]
+           
+       experiment_dict[unique_id] = experiment_dict.get(unique_id, {}) 
+       experiment_dict[unique_id].update({
+           "Density": avgDens,
+           "SWE": avgSWE
+     })
+           
+    
 
    # else:
    #     print(f"{filename.name} ~~~~~~~~~~~~~~~~~ file SKIP")
@@ -392,12 +433,12 @@ def get_lwc(filename, fname_lwc, AvgDensity):
     LWC.insert(5, "LWC-vol A (%)", LWCA_calc , False)
     LWC.insert(6, "LWC-vol B (%)", LWCB_calc, False)
     LWC[['LWC-vol A (%)', 'LWC-vol B (%)']] = LWC[['LWC-vol A (%)', 'LWC-vol B (%)']].astype(float).round(2) # if values are floats, round them
-    LWC.to_csv(fname_lwc, sep=',', index=False, mode='a', na_rep=-9999, encoding='utf-8')
+    LWC.to_csv(fname_lwc, sep=',', index=False, mode='a', na_rep=np.nan, encoding='utf-8')
     print('wrote: .../' + fname_lwc.name)
     
 #-------------------------------------------------------------------------------
 # get_temp() gets the temperature profile from the pit sheet & start/end time
-def get_temp(filename, fname_temperature):
+def get_temp(filename, fname_temperature, metadata):
    
     d = pd.read_excel(filename, header=10, usecols='J:K').replace(r'^\s*$', np.nan, regex=True)
     first_nan = min(np.where(d['(cm)'].isnull().values == True))[0]
@@ -409,8 +450,18 @@ def get_temp(filename, fname_temperature):
     temperature.at[0, 'Time start/end'] = d['START'][0] if not pd.isnull(d['START'][0]) else -9999
     temperature.at[last_row_value, 'Time start/end'] = d['END'][0] if not pd.isnull(d['END'][0]) else -9999
     temperature.columns = ['# Depth (cm)', 'Temperature (deg C)', 'Time start/end']
-    temperature.to_csv(fname_temperature, sep=',', index=False, mode='a', na_rep=-9999)
+    temperature.to_csv(fname_temperature, sep=',', index=False, mode='a', na_rep=np.nan)
     print('wrote: .../' + fname_temperature.name)
+    
+    unique_id = metadata["UniqueID"]
+                   
+    experiment_dict[unique_id] = experiment_dict.get(unique_id, {}) 
+    experiment_dict[unique_id].update({
+        "T_Max": temperature["Temperature (deg C)"].max(),
+        "T_Min": temperature["Temperature (deg C)"].min(),
+        "T_Avg": round(temperature["Temperature (deg C)"].mean(), 1),
+        "T_Range": temperature["Temperature (deg C)"].max() - temperature["Temperature (deg C)"].min() # max - min = + temp range
+    })
 
 #-------------------------------------------------------------------------------
 # get_stratigraphy() gets stratigraphy profile 
@@ -424,8 +475,11 @@ def get_stratigraphy(filename, fname_stratigraphy):
                     'Hand Hardness','Manual Wetness', 'Comments'] #select which onces for the CSV file
     stratigraphy = d[strat_cols].dropna(how='all')
     stratigraphy.to_csv(fname_stratigraphy, sep=',', index=False,
-                        mode='a', na_rep=-9999, encoding='utf-8')
+                        mode='a', na_rep=np.nan, encoding='utf-8')
     print('wrote: .../' + fname_stratigraphy.name)
+    
+
+    
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
@@ -446,13 +500,17 @@ if __name__ == "__main__":
     # static variables
     campaign_prefix = 'campaign_prefix' # ENTER YOUR FIELD CAMPAIGN PREFIX (e.g. SnowEx23_MAR23_AKIOP, SNOWWI_MoresCreek, etc.)
     # version = 'v01'
-    parameter_list = ['density', 'gapFilledDensity', 'temperature', 'lwc', 'stratigraphy'] # REMOVE ANY NOT RELEVANT TO YOUR SNOW PITS, NOTE 'gapFiledDensity' should remain to extrapolate raw density to the ground and gap fill other areas, this is used to compute SWE
-    summary_files_list = ['SWE', 'environment'] # REMOVE ITEM IF YOU DON'T WANT SUMMARY FILE TO GENERATE
+    parameter_list = ['density', 'gapFilledDensity', 'temperature', 'stratigraphy'] # REMOVE ANY NOT RELEVANT TO YOUR SNOW PITS, NOTE 'gapFiledDensity' should remain to extrapolate raw density to the ground and gap fill other areas, this is used to compute SWE
+    summary_files_list = ['SWE', 'environment', 'experiment'] # REMOVE ITEM IF YOU DON'T WANT SUMMARY FILE TO GENERATE
     
     # paths
-    src_path = Path('.')
-    des_path = Path('./outputs/pits')
+    # src_path = Path('.')
+    # des_path = Path('./outputs/pits')
+    src_path = Path('/Users/meganmason/Documents/projects/cold-content/data/data-cssl/opie/pit_sheets')
+    des_path = Path('/Users/meganmason/Documents/projects/cold-content/data/data-cssl/opie/pit_sheets/outputs/pits')
     des_path.mkdir(parents=True, exist_ok=True)
+    
+
     
     ## MODIFICATIONS TO CONSIDER:
         # 1. 'Local Standard Time' - is the Datetime header, but this script doesn't convert to local standard time.
@@ -470,6 +528,9 @@ if __name__ == "__main__":
     # empty dictionary to store summary filenames
     summary_files_dict = {}
     
+    # empty dictionary to store summary experiement data
+    experiment_dict = {}
+    
         
     # Define headers for each file type
     headers = {
@@ -484,7 +545,11 @@ if __name__ == "__main__":
             'Northing (m)', 'Latitude (deg)', 'Longitude (deg)', 'Precipitation', 'Sky',
             'Wind', 'Ground Condition', 'Ground Roughness', 'Ground Vegetation',
             'Height of Ground Vegetation (cm)', 'Canopy'
-        ]
+        ],
+        'experiment':[
+            'Exp. No', 'Exp. Name', 'StartDate', 'EndDate', 'PitDate', 
+            'HS', 'Density', 'SWE', 'T Max', 'T Min', 'T Avg', 'T Range'
+            ]
     }
     
     # write summary header files:  
@@ -507,7 +572,9 @@ if __name__ == "__main__":
  
     swe_fpath = summary_files_dict.get('SWE')
     env_fpath = summary_files_dict.get('environment')
+    exp_fpath = summary_files_dict.get('experiment')
             
+
 
 
     for filename in sorted(src_path.rglob('./data/*.xlsx')):
@@ -521,8 +588,7 @@ if __name__ == "__main__":
         # extract pit sheet metadata and store in dictionary
         metadata = get_metadata(filename)
         
-       
-        
+          
         # empty dictionary to store parameter filenames
         parameter_files = {}
 
@@ -530,16 +596,18 @@ if __name__ == "__main__":
         for parameter in parameter_list:
             
             # initiate parameter file names:
-            file_path = des_path.joinpath(campaign_prefix + '_' + metadata['PitID'] + '_' + parameter + '.csv')
+            file_path = des_path.joinpath(campaign_prefix +'_'+ metadata['PitID'] +'_'+ metadata['Time'].strftime('%H%M') +'_'+ parameter + '.csv')
                 
             # write parameter header file
             write_parameter_header(metadata, file_path)
             
             # store output parameter filenames in dictionary, access later to append data
             parameter_files[parameter] = file_path
+           
             
-        
-
+        # Experiment Summary
+        generate_experiement_summary(opie_dict, metadata)
+            
                 
         # Density & SWE
         if 'density' in parameter_list:
@@ -554,11 +622,22 @@ if __name__ == "__main__":
 
         # Temperature
         if 'temperature' in parameter_list:
-            get_temp(filename, parameter_files['temperature']) 
+            get_temp(filename, parameter_files['temperature'], metadata) 
         
         # Straigraphy
         if 'stratigraphy' in parameter_list:
             get_stratigraphy(filename, parameter_files['stratigraphy'])
+            
+        
+        exp_df = pd.DataFrame.from_dict(experiment_dict, orient='index')
+        exp_df.to_csv(exp_fpath)
+            
+        
+        
+        
+            
+
+        
             
         # Site Details
         # env_result = get_siteDetails(xl, metadata)
